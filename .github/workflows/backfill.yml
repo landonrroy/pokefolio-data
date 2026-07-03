@@ -48,11 +48,22 @@ jobs:
 
           d="$START"
           n=0
+          fetched=0
           while [ "$(date -d "$d" +%s)" -le "$(date -d "$END" +%s)" ]; do
-            ./scripts/fetch-day.sh "$d" || true
+            rc=0
+            bash scripts/fetch-day.sh "$d" || rc=$?
+            # exit 2 = upstream has no archive for that date (expected for gaps);
+            # anything else is a real error and should fail the run
+            if [ "$rc" -eq 0 ]; then fetched=$((fetched + 1)); elif [ "$rc" -ne 2 ]; then exit "$rc"; fi
             n=$((n + 1))
             if [ $((n % 50)) -eq 0 ]; then commit_progress "$d"; fi
             sleep 1   # be polite to tcgcsv
             d="$(date -d "$d + 1 day" +%F)"
           done
           commit_progress "$END"
+
+          echo "Fetched or already had $fetched of $n days"
+          if [ "$fetched" -eq 0 ]; then
+            echo "Backfill produced nothing — investigate" >&2
+            exit 1
+          fi
