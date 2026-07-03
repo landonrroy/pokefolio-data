@@ -1,0 +1,50 @@
+name: Daily archive
+
+on:
+  schedule:
+    - cron: '30 21 * * *'   # tcgcsv publishes ~20:00 UTC; run 90 min later
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install 7-Zip (full build with PPMd support)
+        run: |
+          curl -sL --retry 3 -o /tmp/7z.tar.xz https://www.7-zip.org/a/7z2602-linux-x64.tar.xz
+          mkdir -p "$HOME/7zip"
+          tar -xJf /tmp/7z.tar.xz -C "$HOME/7zip"
+          echo "$HOME/7zip" >> "$GITHUB_PATH"
+
+      - name: Fetch any missing days from the last week
+        run: |
+          for i in 0 1 2 3 4 5 6; do
+            d="$(date -u -d "-$i day" +%F)"
+            ./scripts/fetch-day.sh "$d" || true
+          done
+
+      - name: Commit new data
+        run: |
+          git config user.name "pokefolio-archiver"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"
+          else
+            git commit -m "archive: prices through $(date -u +%F)"
+            git push
+          fi
+
+      - name: Fail if the last 3 days are all missing
+        run: |
+          for i in 0 1 2; do
+            d="$(date -u -d "-$i day" +%F)"
+            if [ -f "data/${d:0:4}/prices-$d.tar.gz" ]; then exit 0; fi
+          done
+          echo "No archives for the last 3 days — check https://tcgcsv.com" >&2
+          exit 1

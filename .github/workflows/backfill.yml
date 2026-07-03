@@ -1,0 +1,58 @@
+name: Backfill history
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'First date to fetch (YYYY-MM-DD; tcgcsv history starts 2024-02-08)'
+        default: '2024-02-08'
+        required: true
+      end_date:
+        description: 'Last date to fetch (YYYY-MM-DD; empty = today)'
+        default: ''
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install 7-Zip (full build with PPMd support)
+        run: |
+          curl -sL --retry 3 -o /tmp/7z.tar.xz https://www.7-zip.org/a/7z2602-linux-x64.tar.xz
+          mkdir -p "$HOME/7zip"
+          tar -xJf /tmp/7z.tar.xz -C "$HOME/7zip"
+          echo "$HOME/7zip" >> "$GITHUB_PATH"
+
+      - name: Backfill date range
+        run: |
+          git config user.name "pokefolio-archiver"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          START="${{ github.event.inputs.start_date }}"
+          END="${{ github.event.inputs.end_date }}"
+          if [ -z "$END" ]; then END="$(date -u +%F)"; fi
+
+          commit_progress() {
+            git add data
+            if ! git diff --cached --quiet; then
+              git commit -m "backfill: through $1"
+              git push
+            fi
+          }
+
+          d="$START"
+          n=0
+          while [ "$(date -d "$d" +%s)" -le "$(date -d "$END" +%s)" ]; do
+            ./scripts/fetch-day.sh "$d" || true
+            n=$((n + 1))
+            if [ $((n % 50)) -eq 0 ]; then commit_progress "$d"; fi
+            sleep 1   # be polite to tcgcsv
+            d="$(date -d "$d + 1 day" +%F)"
+          done
+          commit_progress "$END"
